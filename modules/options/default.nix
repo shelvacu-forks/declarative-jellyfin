@@ -187,7 +187,7 @@ in
           (isNull userOpts.password)
           (isNull userOpts.hashedPassword)
           (isNull userOpts.hashedPasswordFile)
-          userOpts.noPassword
+          (!userOpts.noPassword)
         ]) == 3
       ) (attrValues cfg.users);
       message = ''
