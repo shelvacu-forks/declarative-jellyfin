@@ -307,7 +307,6 @@ let
   dbPath = "${config.services.jellyfin.dataDir}/data/${dbname}";
   sq = ''${pkgs.sqlite}/bin/sqlite3 ${lib.escapeShellArg dbPath} --'';
   dbcmdfile = "dbcommands.sql";
-  jellyfinDoneTag = "/var/log/jellyfin-init-done";
   configDerivations = mapAttrs (
     file: cfg: pkgs.writeText file (toXml cfg.name cfg.content)
   ) jellyfinConfigFiles;
@@ -332,8 +331,6 @@ in
       cfg.network.publicHttpsPort
     ];
     systemd.services.jellyfin.preStart = ''
-      rm -rf "${jellyfinDoneTag}"
-
       # u=rwx
       # g=r-x
       # o=---
@@ -356,13 +353,6 @@ in
       }
 
       trap handle_error ERR
-
-      function cleanup() {
-        echo "REMOVING DONE TAG"
-        rm -rf "${jellyfinDoneTag}"
-      }
-
-      trap cleanup EXIT SIGINT SIGTERM SIGHUP SIGQUIT
 
       dbcmds="$(mktemp -d)/${dbcmdfile}"
       install -Dm 774 /dev/null "$dbcmds"
@@ -530,8 +520,6 @@ in
       echo "Executing SQL Commands:"
       cat "$dbcmds"
       ${pkgs.sqlite}/bin/sqlite3 "${config.services.jellyfin.dataDir}/data/${dbname}" < "$dbcmds"
-
-      touch '${jellyfinDoneTag}'
     '';
     # systemd.services.jellyfin.serviceConfig.ExecStart =
     #   lib.mkForce "+${jellyfin-init}/bin/jellyfin-init";
