@@ -431,7 +431,7 @@ in
 
           # Rotate backups
           declare -a backups
-          mapfile -d "" -t backups <(find "$backupDir" -print0 | sort -z)
+          mapfile -d "" -t backups < <(find "$backupDir" -print0 | sort -z)
           declare -i num_backups num_backups_to_remove
           num_backups=''${#backups[@]}
           num_backups_to_remove=$((num_backups - ${toString cfg.backupCount}))
