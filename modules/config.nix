@@ -108,6 +108,7 @@ let
   };
   dbname = "jellyfin.db";
   nonDBOptions = [
+    "noPassword"
     "hashedPasswordFile"
     "hashedPassword"
     "mutable"
