@@ -6,6 +6,7 @@
 }:
 with lib;
 let
+  e = lib.escapeShellArg;
   cfg = config.services.declarative-jellyfin;
   genhash = import ./pbkdf2-sha512.nix { inherit pkgs; };
   djLib = import ../lib { nixpkgs = pkgs; };
@@ -197,14 +198,14 @@ let
             if !(isNull userOpts.internalId) then
               userOpts.internalId
             else
-              "$(($maxIndex+${toString (index + 1)}))";
+              "$((maxIndex+${toString (index + 3)}))";
           password =
             if !(isNull userOpts.hashedPasswordFile) then
-              "$(${pkgs.coreutils}/bin/cat \"${userOpts.hashedPasswordFile}\")"
+              "$(<${e userOpts.hashedPasswordFile})"
             else if !(isNull userOpts.hashedPassword) then
-              "$(echo -n '${userOpts.hashedPassword}')"
+              userOpts.hashedPassword
             else
-              "$(${genhash}/bin/genhash -k \"${userOpts.password}\" -i 210000 -l 128 -u)";
+              "$(${genhash}/bin/genhash -k ${e userOpts.password} -i 210000 -l 128 -u)";
         }
       ) nonDBOptions;
       userWithNoId = removeAttrs mutatedUser [
@@ -226,15 +227,17 @@ let
       # If the user is mutable, only insert the user if it doesn't already exist, otherwise just overwrite
       if [ ${
         if (userOpts.mutable) then
-          "-z $userExists" # user doesn't exist
+          ''-z "$userExists"'' # user doesn't exist
         else
           "-n \"true\""
       } ]; then
-        sql="INSERT INTO Users (${concatStringsSep "," optionsNoId}, InternalId, Id) VALUES(${concatStringsSep "," (map toString (attrValues (sqliteFormatAttrs userWithNoId)))},$(($maxIndex+${toString (index + 1)})), '$userId')"
+        sql="INSERT INTO Users (${concatStringsSep "," optionsNoId}, InternalId, Id) VALUES(${concatStringsSep "," (map toString (attrValues (sqliteFormatAttrs userWithNoId)))},$((maxIndex+${toString (index + 1)})), '$userId')"
         # User already exists - don't insert a new Id, just re-use the one already present,
         # so any foreign key relations don't fail because of overwriting with newly generated ID.
         if [ -n "$userExists" ]; then
           echo "Excluding insertion of Id/InternalId, since user already exists in DB"
+          # password hash looks like substitution
+          # shellcheck disable=SC2016
           sql="UPDATE Users SET ${
             concatStringsSep "," (
               map (
@@ -258,7 +261,7 @@ let
             '${
               concatStringsSep "," (
                 map (
-                  enabledLib: "$(${genfolderuuid}/bin/genfolderuuid \"${enabledLib}\")"
+                  enabledLib: "$(${genfolderuuid}/bin/genfolderuuid ${e enabledLib})"
                 ) userOpts.preferences.enabledLibraries
               )
             }');" >> "$dbcmds"
@@ -425,22 +428,27 @@ in
       ${lib.optionalString cfg.backups
         # bash
         ''
-          # Make sure ${cfg.backupDir} exists
-          mkdir -p "${cfg.backupDir}"
-          backupName="${cfg.backupDir}/backup_$(date +%Y%m%d%H%M%S%N).tar.gz"
+          backupDir=${e cfg.backupDir}
+          # Make sure backupDir exists
+          mkdir -p -- "$backupDir"
+          backupName="$backupDir/backup_$(date +%Y%m%d%H%M%S%N).tar.gz"
 
           install -Dm 775 /dev/null "$backupName"
           echo "Creating backup: $backupName"
           ${pkgs.gnutar}/bin/tar -c --exclude "${removePrefix "/" cfg.backupDir}" -C / ${removePrefix "/" config.services.jellyfin.logDir} -C / ${removePrefix "/" config.services.jellyfin.dataDir} -C / ${removePrefix "/" config.services.jellyfin.configDir} -C / ${removePrefix "/" config.services.jellyfin.cacheDir} -f - | ${pkgs.pigz}/bin/pigz > "$backupName"
 
           # Rotate backups
-          num_backups=$(ls -1 "${cfg.backupDir}" | wc -l)
+          declare -a backups
+          mapfile -d "" -t backups <(find "$backupDir" -print0 | sort -z)
+          declare -i num_backups num_backups_to_remove
+          num_backups=''${#backups[@]}
           num_backups_to_remove=$((num_backups - ${toString cfg.backupCount}))
 
-          if [ $num_backups_to_remove -gt 0 ]; then
-            old_backups=$(ls -1 "${cfg.backupDir}" | sort | head -n "$num_backups_to_remove")
-            for old_backup in $old_backups; do
-              rm "${cfg.backupDir}/$old_backup"
+          if (( num_backups_to_remove -gt 0 )); then
+            declare -a old_backups
+            old_backups=("''${backups[@]:0:$num_backups_to_remove}")
+            for old_backup in "''${old_backups[@]}"; do
+              rm "$old_backup"
               echo "Purged backup: $old_backup"
             done
           fi
