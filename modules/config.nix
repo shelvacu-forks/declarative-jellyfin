@@ -230,7 +230,7 @@ let
         else
           "-n \"true\""
       } ]; then
-        sql="INSERT INTO Users (${concatStringsSep "," optionsNoId}, InternalId, Id) VALUES(${concatStringsSep "," (map toString (attrValues (sqliteFormatAttrs userWithNoId)))},$(($maxIndex+${toString (index + 1)})), $(echo "'$userId'"))"
+        sql="INSERT INTO Users (${concatStringsSep "," optionsNoId}, InternalId, Id) VALUES(${concatStringsSep "," (map toString (attrValues (sqliteFormatAttrs userWithNoId)))},$(($maxIndex+${toString (index + 1)})), '$userId')"
         # User already exists - don't insert a new Id, just re-use the one already present,
         # so any foreign key relations don't fail because of overwriting with newly generated ID.
         if [ -n "$userExists" ]; then
@@ -254,7 +254,7 @@ let
         ${lib.optionalString (userOpts.preferences.enabledLibraries != [ ])
           # bash
           ''
-            echo "REPLACE INTO Preferences(Kind, RowVersion, UserId, Value) VALUES(${toString preferenceKindToDBInteger.enabledFolders}, 0, $(echo "'$userId'"),
+            echo "REPLACE INTO Preferences(Kind, RowVersion, UserId, Value) VALUES(${toString preferenceKindToDBInteger.enabledFolders}, 0, '$userId',
             '${
               concatStringsSep "," (
                 map (
@@ -273,7 +273,7 @@ let
             ''
               sql="REPLACE INTO Permissions (Kind, Value, UserId, Permission_Permissions_Guid, RowVersion) VALUES(${
                 toString permissionKindToDBInteger.${permission}
-              }, ${if enabled then "1" else "0"}, $(echo "'$userId'"), NULL, 0);"
+              }, ${if enabled then "1" else "0"}, '$userId', NULL, 0);"
               echo "$sql" >> "$dbcmds"
             '') userOpts.permissions
         )}
@@ -353,7 +353,7 @@ in
       trap handle_error ERR
 
       function cleanup() {
-        log "REMOVING DONE TAG"
+        echo "REMOVING DONE TAG"
         rm -rf "${jellyfinDoneTag}"
       }
 
