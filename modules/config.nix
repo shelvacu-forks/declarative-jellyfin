@@ -404,207 +404,6 @@ let
     file: cfg: pkgs.writeText file (toXml cfg.name cfg.content)
   ) jellyfinConfigFiles;
   jellyfin-exec = "${getExe config.services.jellyfin.package} --datadir '${config.services.jellyfin.dataDir}' --configdir '${config.services.jellyfin.configDir}' --cachedir '${config.services.jellyfin.cacheDir}' --logdir '${config.services.jellyfin.logDir}'";
-  jellyfin-init =
-    pkgs.writeShellScriptBin "jellyfin-init"
-      # bash
-      ''
-          set -euo pipefail
-          rm -rf "${jellyfinDoneTag}"
-          trap cleanup EXIT SIGINT SIGTERM SIGHUP SIGQUIT
-          trap handle_error ERR
-
-          # u=rwx
-          # g=r-x
-          # o=---
-          umask 027
-
-          # Setup directories
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.configDir}"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.logDir}"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.cacheDir}"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/metadata"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/playlists"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/wwwroot"
-          install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/plugins/configurations"
-
-          install -Dm 774 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "${log}"
-
-          ${print "Log init"}
-
-          function handle_error() {
-            ${print "An ERROR occured during jellyfin-init!"}
-            ${print "Log file:\n$(cat \"${log}\")"}
-          }
-
-          function cleanup() {
-            ${print "REMOVING DONE TAG"}
-            rm -rf "${jellyfinDoneTag}"
-          }
-
-          dbcmds="$(mktemp -d)/${dbcmdfile}"
-          install -Dm 774 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "$dbcmds"
-          trap "rm -rf \"$dbcmds\"" exit
-          echo "BEGIN TRANSACTION;" > "$dbcmds"
-
-
-            # Install each config
-            ${concatStringsSep "\n" (
-              mapAttrsToList (
-                file: path: ''install -Dm 640 "${path}" "${config.services.jellyfin.configDir}/${file}"''
-              ) configDerivations
-            )}
-
-            ${lib.optionalString cfg.system.isStartupWizardCompleted
-              # bash
-              ''
-                # We need to generate a valid migrations.xml file if it's a first run and
-                # `services.declarative-jellyfin.system.IsStartupWizardCompleted=true`
-                # otherwise jellyfin will try and run deprecated/old migrations, see:
-                # https://github.com/jellyfin/jellyfin/issues/12254
-                if [ ! -f "${config.services.jellyfin.configDir}/migrations.xml" ]; then
-                  echo "First time run and no migrations.xml. We run jellyfin once to generate it..."
-                  echo "Starting jellyfin with IsStartupWizardCompleted = false"
-                  ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//IsStartupWizardCompleted" -v "false" "${config.services.jellyfin.configDir}/system.xml"
-                  ${jellyfin-exec} & disown
-                  echo "Waiting for jellyfin to generate migrations.xml"
-                  until [ -f "${config.services.jellyfin.configDir}/migrations.xml" ]
-                  do
-                    sleep 1
-                  done
-                  sleep 5
-                  echo "migrations.xml generated! Restarting jellyfin..."
-                  echo "migrations.xml:"
-                  cat "${config.services.jellyfin.configDir}/migrations.xml"
-                  ${pkgs.procps}/bin/pkill -15 -f ${config.services.jellyfin.package}
-                  echo "Waiting for jellyfin to shut down properly"
-                  while ${pkgs.ps}/bin/ps axg | ${pkgs.gnugrep}/bin/grep -vw grep | ${pkgs.gnugrep}/bin/grep -w ${config.services.jellyfin.package} > /dev/null; do sleep 1 && printf "."; done
-                  echo "Jellyfin terminated. Resetting with IsStartupWizardCompleted set to true"
-                  ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//IsStartupWizardCompleted" -v "true" "${config.services.jellyfin.configDir}/system.xml"
-                fi
-              ''
-            }
-
-          # Make sure there is a database
-          if [ ! -e "${config.services.jellyfin.dataDir}/data/${dbname}" ]; then
-            ${print "No DB found. First time run detected. Launching jellyfin once to generate initial config + DB..."}
-            ${jellyfin-exec} & disown
-
-            ${print "Waiting for jellyfin finish startup"}
-            until [ -f "${config.services.jellyfin.dataDir}/data/${dbname}" ]
-            do
-              sleep 1
-            done
-            sleep 5
-            ${print "Initial jellyfin setup done"}
-            ${pkgs.procps}/bin/pkill -15 -f ${config.services.jellyfin.package}
-            ${print "Waiting for jellyfin to shut down properly"}
-            while ${pkgs.ps}/bin/ps axg | ${pkgs.gnugrep}/bin/grep -vw grep | ${pkgs.gnugrep}/bin/grep -w ${config.services.jellyfin.package} > /dev/null; do sleep 1 && printf "."; done
-            cat "${config.services.jellyfin.configDir}/migrations.xml"
-            ${print "Jellyfin terminated"}
-          fi
-
-        # Rotating backups
-        ${lib.optionalString cfg.backups
-          # bash
-          ''
-            # Make sure ${cfg.backupDir} exists
-            install -d -m 775 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${cfg.backupDir}"
-            backupName="${cfg.backupDir}/backup_$(date +%Y%m%d%H%M%S%N).tar.gz"
-
-            install -Dm 775 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "$backupName"
-            ${print "Creating backup: $backupName"}
-            ${pkgs.gnutar}/bin/tar -c --exclude "${removePrefix "/" cfg.backupDir}" -C / ${removePrefix "/" config.services.jellyfin.logDir} -C / ${removePrefix "/" config.services.jellyfin.dataDir} -C / ${removePrefix "/" config.services.jellyfin.configDir} -C / ${removePrefix "/" config.services.jellyfin.cacheDir} -f - | ${pkgs.pigz}/bin/pigz > "$backupName"
-
-            # Rotate backups
-            num_backups=$(ls -1 "${cfg.backupDir}" | wc -l)
-            num_backups_to_remove=$((num_backups - ${toString cfg.backupCount}))
-
-            if [ $num_backups_to_remove -gt 0 ]; then
-              old_backups=$(ls -1 "${cfg.backupDir}" | sort | head -n "$num_backups_to_remove")
-              for old_backup in $old_backups; do
-                rm "${cfg.backupDir}/$old_backup"
-                ${print "Purged backup: $old_backup"}
-              done
-            fi
-          ''
-        }
-
-        # Server id
-        ${lib.optionalString (!isNull cfg.serverId) # bash
-          ''
-            install -Dm 740 /dev/null "${config.services.jellyfin.dataDir}/data/device.txt"
-            echo -n "${cfg.serverId}" > "${config.services.jellyfin.dataDir}/data/device.txt"
-          ''
-        }
-
-          maxIndex=$(${sq} 'SELECT InternalId FROM Users ORDER BY InternalId DESC LIMIT 1')
-          if [ -z "$maxIndex" ]; then
-            maxIndex="1"
-          fi
-          ${print "Max index: $maxIndex"}
-
-          # Generate each user
-          ${concatStringsSep "\n" (
-            map
-              (
-                {
-                  fst,
-                  snd,
-                }:
-                genUser fst snd cfg.users.${snd}
-              )
-              (
-                lib.lists.zipLists (builtins.genList (x: x) (builtins.length (builtins.attrValues cfg.users))) (
-                  builtins.attrNames cfg.users
-                )
-              )
-          )}
-
-          # Handle libraries
-          ${builtins.concatStringsSep "\n" (
-            mapAttrsToList (
-              name: value:
-              let
-                path = "${config.services.jellyfin.dataDir}/root/default/${name}";
-              in
-              # bash
-              ''
-                install -Dm 740 '${pkgs.writeText "options.xml" (toXml "LibraryOptions" value)}' "${path}/options.xml"
-                touch "${path}/${value.ContentType}.collection"
-                # Create .mblink files foreach path in library
-                ${concatStringsSep "\n" (
-                  map (
-                    pathInfo:
-                    # bash
-                    ''
-                      install -Dm 740 /dev/null "${config.services.jellyfin.dataDir}/root/default/${name}/${baseNameOf pathInfo.MediaPathInfo.Path}.mblink"
-                      echo -n "${pathInfo.MediaPathInfo.Path}" > "${config.services.jellyfin.dataDir}/root/default/${name}/${baseNameOf pathInfo.MediaPathInfo.Path}.mblink"
-                    '') value.PathInfos
-                )}
-              ''
-            ) prepassedLibraries
-          )}
-
-          # API Keys
-          ${concatStringsSep "\n" (
-            mapAttrsToList (
-              appName: value:
-              # bash
-              ''
-                echo "REPLACE INTO ApiKeys (DateCreated, DateLastActivity, Name, AccessToken) VALUES(time(), time(), '${appName}', ${
-                  if !(isNull value.key) then "'${value.key}'" else "'$(cat \"${value.keyPath}\")'"
-                });" >> "$dbcmds"
-              '') cfg.apikeys
-          )}
-
-        # Commit SQL commands
-        echo "COMMIT TRANSACTION;" >> "$dbcmds"
-        ${print "Executing SQL Commands:\n$(cat \"$dbcmds\")"}
-        ${pkgs.sqlite}/bin/sqlite3 "${config.services.jellyfin.dataDir}/data/${dbname}" < "$dbcmds"
-
-        touch '${jellyfinDoneTag}'
-        ${jellyfin-exec}
-      '';
 in
 {
   config = mkIf cfg.enable {
@@ -624,7 +423,203 @@ in
       cfg.network.publicHttpPort
       cfg.network.publicHttpsPort
     ];
-    systemd.services.jellyfin.serviceConfig.ExecStart =
-      lib.mkForce "+${jellyfin-init}/bin/jellyfin-init";
+    systemd.services.jellyfin.preStart = ''
+      rm -rf "${jellyfinDoneTag}"
+      trap cleanup EXIT SIGINT SIGTERM SIGHUP SIGQUIT
+      trap handle_error ERR
+
+      # u=rwx
+      # g=r-x
+      # o=---
+      umask 027
+
+      # Setup directories
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.configDir}"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.logDir}"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.cacheDir}"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/metadata"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/playlists"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/wwwroot"
+      install -d -m 750 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${config.services.jellyfin.dataDir}/plugins/configurations"
+
+      install -Dm 774 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "${log}"
+
+      ${print "Log init"}
+
+      function handle_error() {
+        ${print "An ERROR occured during jellyfin-init!"}
+        ${print "Log file:\n$(cat \"${log}\")"}
+      }
+
+      function cleanup() {
+        ${print "REMOVING DONE TAG"}
+        rm -rf "${jellyfinDoneTag}"
+      }
+
+      dbcmds="$(mktemp -d)/${dbcmdfile}"
+      install -Dm 774 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "$dbcmds"
+      trap "rm -rf \"$dbcmds\"" exit
+      echo "BEGIN TRANSACTION;" > "$dbcmds"
+
+
+      # Install each config
+      ${concatStringsSep "\n" (
+        mapAttrsToList (
+          file: path: ''install -Dm 640 "${path}" "${config.services.jellyfin.configDir}/${file}"''
+        ) configDerivations
+      )}
+
+      ${lib.optionalString cfg.system.isStartupWizardCompleted
+        # bash
+        ''
+          # We need to generate a valid migrations.xml file if it's a first run and
+          # `services.declarative-jellyfin.system.IsStartupWizardCompleted=true`
+          # otherwise jellyfin will try and run deprecated/old migrations, see:
+          # https://github.com/jellyfin/jellyfin/issues/12254
+          if [ ! -f "${config.services.jellyfin.configDir}/migrations.xml" ]; then
+            echo "First time run and no migrations.xml. We run jellyfin once to generate it..."
+            echo "Starting jellyfin with IsStartupWizardCompleted = false"
+            ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//IsStartupWizardCompleted" -v "false" "${config.services.jellyfin.configDir}/system.xml"
+            ${jellyfin-exec} & disown
+            echo "Waiting for jellyfin to generate migrations.xml"
+            until [ -f "${config.services.jellyfin.configDir}/migrations.xml" ]
+            do
+              sleep 1
+            done
+            sleep 5
+            echo "migrations.xml generated! Restarting jellyfin..."
+            echo "migrations.xml:"
+            cat "${config.services.jellyfin.configDir}/migrations.xml"
+            ${pkgs.procps}/bin/pkill -15 -f ${config.services.jellyfin.package}
+            echo "Waiting for jellyfin to shut down properly"
+            while ${pkgs.ps}/bin/ps axg | ${pkgs.gnugrep}/bin/grep -vw grep | ${pkgs.gnugrep}/bin/grep -w ${config.services.jellyfin.package} > /dev/null; do sleep 1 && printf "."; done
+            echo "Jellyfin terminated. Resetting with IsStartupWizardCompleted set to true"
+            ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//IsStartupWizardCompleted" -v "true" "${config.services.jellyfin.configDir}/system.xml"
+          fi
+        ''
+      }
+
+      # Make sure there is a database
+      if [ ! -e "${config.services.jellyfin.dataDir}/data/${dbname}" ]; then
+        ${print "No DB found. First time run detected. Launching jellyfin once to generate initial config + DB..."}
+        ${jellyfin-exec} & disown
+
+        ${print "Waiting for jellyfin finish startup"}
+        until [ -f "${config.services.jellyfin.dataDir}/data/${dbname}" ]
+        do
+          sleep 1
+        done
+        sleep 5
+        ${print "Initial jellyfin setup done"}
+        ${pkgs.procps}/bin/pkill -15 -f ${config.services.jellyfin.package}
+        ${print "Waiting for jellyfin to shut down properly"}
+        while ${pkgs.ps}/bin/ps axg | ${pkgs.gnugrep}/bin/grep -vw grep | ${pkgs.gnugrep}/bin/grep -w ${config.services.jellyfin.package} > /dev/null; do sleep 1 && printf "."; done
+        cat "${config.services.jellyfin.configDir}/migrations.xml"
+        ${print "Jellyfin terminated"}
+      fi
+
+      # Rotating backups
+      ${lib.optionalString cfg.backups
+        # bash
+        ''
+          # Make sure ${cfg.backupDir} exists
+          install -d -m 775 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} "${cfg.backupDir}"
+          backupName="${cfg.backupDir}/backup_$(date +%Y%m%d%H%M%S%N).tar.gz"
+
+          install -Dm 775 -o ${config.services.jellyfin.user} -g ${config.services.jellyfin.group} /dev/null "$backupName"
+          ${print "Creating backup: $backupName"}
+          ${pkgs.gnutar}/bin/tar -c --exclude "${removePrefix "/" cfg.backupDir}" -C / ${removePrefix "/" config.services.jellyfin.logDir} -C / ${removePrefix "/" config.services.jellyfin.dataDir} -C / ${removePrefix "/" config.services.jellyfin.configDir} -C / ${removePrefix "/" config.services.jellyfin.cacheDir} -f - | ${pkgs.pigz}/bin/pigz > "$backupName"
+
+          # Rotate backups
+          num_backups=$(ls -1 "${cfg.backupDir}" | wc -l)
+          num_backups_to_remove=$((num_backups - ${toString cfg.backupCount}))
+
+          if [ $num_backups_to_remove -gt 0 ]; then
+            old_backups=$(ls -1 "${cfg.backupDir}" | sort | head -n "$num_backups_to_remove")
+            for old_backup in $old_backups; do
+              rm "${cfg.backupDir}/$old_backup"
+              ${print "Purged backup: $old_backup"}
+            done
+          fi
+        ''
+      }
+
+      # Server id
+      ${lib.optionalString (!isNull cfg.serverId) # bash
+        ''
+          install -Dm 740 /dev/null "${config.services.jellyfin.dataDir}/data/device.txt"
+          echo -n "${cfg.serverId}" > "${config.services.jellyfin.dataDir}/data/device.txt"
+        ''
+      }
+
+      maxIndex=$(${sq} 'SELECT InternalId FROM Users ORDER BY InternalId DESC LIMIT 1')
+      if [ -z "$maxIndex" ]; then
+        maxIndex="1"
+      fi
+      ${print "Max index: $maxIndex"}
+
+      # Generate each user
+      ${concatStringsSep "\n" (
+        map
+          (
+            {
+              fst,
+              snd,
+            }:
+            genUser fst snd cfg.users.${snd}
+          )
+          (
+            lib.lists.zipLists (builtins.genList (x: x) (builtins.length (builtins.attrValues cfg.users))) (
+              builtins.attrNames cfg.users
+            )
+          )
+      )}
+
+      # Handle libraries
+      ${builtins.concatStringsSep "\n" (
+        mapAttrsToList (
+          name: value:
+          let
+            path = "${config.services.jellyfin.dataDir}/root/default/${name}";
+          in
+          # bash
+          ''
+            install -Dm 740 '${pkgs.writeText "options.xml" (toXml "LibraryOptions" value)}' "${path}/options.xml"
+            touch "${path}/${value.ContentType}.collection"
+            # Create .mblink files foreach path in library
+            ${concatStringsSep "\n" (
+              map (
+                pathInfo:
+                # bash
+                ''
+                  install -Dm 740 /dev/null "${config.services.jellyfin.dataDir}/root/default/${name}/${baseNameOf pathInfo.MediaPathInfo.Path}.mblink"
+                  echo -n "${pathInfo.MediaPathInfo.Path}" > "${config.services.jellyfin.dataDir}/root/default/${name}/${baseNameOf pathInfo.MediaPathInfo.Path}.mblink"
+                '') value.PathInfos
+            )}
+          ''
+        ) prepassedLibraries
+      )}
+
+      # API Keys
+      ${concatStringsSep "\n" (
+        mapAttrsToList (
+          appName: value:
+          # bash
+          ''
+            echo "REPLACE INTO ApiKeys (DateCreated, DateLastActivity, Name, AccessToken) VALUES(time(), time(), '${appName}', ${
+              if !(isNull value.key) then "'${value.key}'" else "'$(cat \"${value.keyPath}\")'"
+            });" >> "$dbcmds"
+          '') cfg.apikeys
+      )}
+
+      # Commit SQL commands
+      echo "COMMIT TRANSACTION;" >> "$dbcmds"
+      ${print "Executing SQL Commands:\n$(cat \"$dbcmds\")"}
+      ${pkgs.sqlite}/bin/sqlite3 "${config.services.jellyfin.dataDir}/data/${dbname}" < "$dbcmds"
+
+      touch '${jellyfinDoneTag}'
+    '';
+    # systemd.services.jellyfin.serviceConfig.ExecStart =
+    #   lib.mkForce "+${jellyfin-init}/bin/jellyfin-init";
   };
 }
