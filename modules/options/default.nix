@@ -188,7 +188,7 @@ in
           (isNull userOpts.hashedPassword)
           (isNull userOpts.hashedPasswordFile)
           userOpts.noPassword
-        ]) == 2
+        ]) == 3
       ) (attrValues cfg.users);
       message = ''
         For a user, exactly one of `password`, `noPassword`, `hashedPassword` and `hashedPasswordFile` should be defined.
