@@ -346,14 +346,8 @@ in
       )
       mkdir -p -- "''${dirs[@]}"
 
-      install -Dm 774 /dev/null ${lib.escapeShellArg log}
-
-      log "Log init"
-
       function handle_error() {
-        log "An ERROR occured during jellyfin-init!"
-        echo "Log file:"
-        cat ${lib.escapeShellArg log}
+        echo "An ERROR occured during jellyfin-init!"
       }
 
       trap handle_error ERR
