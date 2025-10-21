@@ -198,12 +198,12 @@ let
             if !(isNull userOpts.internalId) then
               userOpts.internalId
             else
-              "$((maxIndex+${toString (index + 3)}))";
+              "$((maxIndex+${toString (index + 1)}))";
           password =
             if !(isNull userOpts.hashedPasswordFile) then
               "$(<${e userOpts.hashedPasswordFile})"
             else if !(isNull userOpts.hashedPassword) then
-              userOpts.hashedPassword
+              ''"${e userOpts.hashedPassword}"''
             else
               "$(${genhash}/bin/genhash -k ${e userOpts.password} -i 210000 -l 128 -u)";
         }
@@ -444,7 +444,7 @@ in
           num_backups=''${#backups[@]}
           num_backups_to_remove=$((num_backups - ${toString cfg.backupCount}))
 
-          if (( num_backups_to_remove -gt 0 )); then
+          if (( num_backups_to_remove > 0 )); then
             declare -a old_backups
             old_backups=("''${backups[@]:0:$num_backups_to_remove}")
             for old_backup in "''${old_backups[@]}"; do
