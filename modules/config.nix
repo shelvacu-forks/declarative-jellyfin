@@ -348,9 +348,6 @@ in
 
       install -Dm 774 /dev/null ${lib.escapeShellArg log}
 
-      function log() {
-        printf "%s\n" "$@" | tee --append ${lib.escapeShellArg log}
-      }
       log "Log init"
 
       function handle_error() {
