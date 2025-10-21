@@ -183,7 +183,7 @@ in
     {
       assertion = all (
         userOpts:
-        (lib.count isNull [
+        (lib.count lib.id [
           (isNull userOpts.password)
           (isNull userOpts.hashedPassword)
           (isNull userOpts.hashedPasswordFile)
@@ -191,7 +191,7 @@ in
         ]) == 3
       ) (attrValues cfg.users);
       message = ''
-        For a user, exactly one of `password`, `noPassword`, `hashedPassword` and `hashedPasswordFile` should be defined.
+        For all users, exactly one of `password`, `noPassword`, `hashedPassword` and `hashedPasswordFile` should be defined.
       '';
     }
   ];
