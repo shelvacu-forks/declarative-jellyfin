@@ -231,6 +231,8 @@ let
         else
           "-n \"true\""
       } ]; then
+        # password hash looks like substitution
+        # shellcheck disable=SC2016
         sql="INSERT INTO Users (${concatStringsSep "," optionsNoId}, InternalId, Id) VALUES(${concatStringsSep "," (map toString (attrValues (sqliteFormatAttrs userWithNoId)))},$((maxIndex+${toString (index + 1)})), '$userId')"
         # User already exists - don't insert a new Id, just re-use the one already present,
         # so any foreign key relations don't fail because of overwriting with newly generated ID.
