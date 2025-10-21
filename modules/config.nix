@@ -200,7 +200,9 @@ let
             else
               "$((maxIndex+${toString (index + 1)}))";
           password =
-            if !(isNull userOpts.hashedPasswordFile) then
+            if userOpts.noPassword then
+              null
+            else if !(isNull userOpts.hashedPasswordFile) then
               "$(<${e userOpts.hashedPasswordFile})"
             else if !(isNull userOpts.hashedPassword) then
               ''"${e userOpts.hashedPassword}"''

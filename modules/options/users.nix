@@ -285,6 +285,10 @@ let
           type = with types; nullOr str;
           default = null;
         };
+        noPassword = mkOption {
+          type = types.bool;
+          default = false;
+        };
         hashedPassword = mkOption {
           type = types.nullOr types.str;
           default = null;
