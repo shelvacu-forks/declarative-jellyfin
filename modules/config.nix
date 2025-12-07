@@ -378,7 +378,7 @@ in
           # `services.declarative-jellyfin.system.IsStartupWizardCompleted=true`
           # otherwise jellyfin will try and run deprecated/old migrations, see:
           # https://github.com/jellyfin/jellyfin/issues/12254
-          if [ ! -f "${config.services.jellyfin.configDir}/migrations.xml" ]; then
+          if [[ ! -f "${config.services.jellyfin.configDir}/migrations.xml" ]] && [[ ! -f "${config.services.jellyfin.configDir}/migrations.xml.backup" ]]; then
             echo "First time run and no migrations.xml. We run jellyfin once to generate it..."
             echo "Starting jellyfin with IsStartupWizardCompleted = false"
             ${pkgs.xmlstarlet}/bin/xmlstarlet ed -L -u "//IsStartupWizardCompleted" -v "false" "${config.services.jellyfin.configDir}/system.xml"
